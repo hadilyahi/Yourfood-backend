@@ -1,34 +1,38 @@
 const express = require("express");
 const axios = require("axios");
 const cors = require("cors");
-const crypto = require("crypto");
-const qs = require("querystring");
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: "*" })); // السماح لجميع الطلبات
+app.use(express.json()); // دعم JSON requests
 
 const API_URL = "https://platform.fatsecret.com/rest/server.api";
 const API_KEY = "d702d141d18a4a0393fdcf2bbb5dff3a";
 const API_SECRET = "b137e873e3f5413e919427482f6c461a";
 
-// وظيفة لإنشاء توقيع OAuth 1.0a بشكل صحيح
-const createOAuthSignature = (params) => {
-    // ترتيب المعاملات أبجديًا كما يتطلب FatSecret
-    const sortedParams = Object.keys(params)
-        .sort()
-        .map((key) => `${key}=${encodeURIComponent(params[key])}`)
-        .join("&");
+// 🔹 دالة للحصول على Access Token من FatSecret
+const getAccessToken = async () => {
+    const auth = Buffer.from(`${API_KEY}:${API_SECRET}`).toString("base64");
 
-    // إنشاء **Base String** بالشكل الصحيح
-    const baseString = `POST&${encodeURIComponent(API_URL)}&${encodeURIComponent(sortedParams)}`;
-
-    // مفتاح التوقيع (يجب أن يكون `API_SECRET&` لأننا لا نستخدم `oauth_token`)
-    const signingKey = `${API_SECRET}&`;
-
-    // توليد التوقيع باستخدام HMAC-SHA1
-    return crypto.createHmac("sha1", signingKey).update(baseString).digest("base64");
+    try {
+        const response = await axios.post(
+            "https://oauth.fatsecret.com/connect/token",
+            "grant_type=client_credentials&scope=basic",
+            {
+                headers: {
+                    Authorization: `Basic ${auth}`,
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+            }
+        );
+        return response.data.access_token;
+    } catch (error) {
+        console.error("❌ Error getting access token:", error.response?.data || error.message);
+        return null;
+    }
 };
 
+// 🔹 نقطة نهاية API لجلب المعلومات الغذائية
 app.get("/api/nutrition", async (req, res) => {
     try {
         const searchQuery = req.query.search;
@@ -36,27 +40,23 @@ app.get("/api/nutrition", async (req, res) => {
             return res.status(400).json({ error: "يرجى إدخال المكونات" });
         }
 
-        // إعداد معلمات OAuth
-        const params = {
-            method: "foods.search",
-            search_expression: searchQuery,
-            format: "json",
-            oauth_consumer_key: API_KEY,
-            oauth_nonce: crypto.randomBytes(16).toString("hex"),
-            oauth_signature_method: "HMAC-SHA1",
-            oauth_timestamp: Math.floor(Date.now() / 1000),
-            oauth_version: "1.0",
-        };
+        // ✅ الحصول على Access Token
+        const accessToken = await getAccessToken();
+        if (!accessToken) {
+            return res.status(500).json({ error: "فشل في الحصول على Access Token" });
+        }
 
-        // إنشاء التوقيع الصحيح وإضافته إلى الطلب
-        params.oauth_signature = createOAuthSignature(params);
-
-        // تحويل البيانات إلى `x-www-form-urlencoded`
-        const requestBody = qs.stringify(params);
-
-        // إرسال الطلب إلى FatSecret API
-        const response = await axios.post(API_URL, requestBody, {
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        // ✅ إرسال الطلب إلى FatSecret باستخدام Access Token
+        const response = await axios.get(API_URL, {
+            params: {
+                method: "foods.search",
+                search_expression: searchQuery,
+                format: "json",
+            },
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json",
+            },
         });
 
         res.json(response.data);
@@ -66,4 +66,6 @@ app.get("/api/nutrition", async (req, res) => {
     }
 });
 
-app.listen(5000, () => console.log("🚀 Proxy server running on port 5000"));
+// ✅ تشغيل السيرفر
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`🚀 Proxy server running on port ${PORT}`));
