@@ -7,7 +7,7 @@ const app = express();
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-const API_KEY = process.env.USDA_API_KEY;
+const API_KEY = "qq1B0QRigTBZMvfT0eQKGBT2ZyNtk2PCnHaD5wG7";
 
 if (!API_KEY) {
     console.error("❌ تأكد من إدخال USDA_API_KEY في ملف .env");
